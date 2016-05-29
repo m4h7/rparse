@@ -1,0 +1,6 @@
+[package]
+name = "rustparser"
+version = "0.1.0"
+authors = ["m4h7"]
+
+[dependencies]
