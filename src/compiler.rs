@@ -1,11 +1,14 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::path::Path;
+use std::io::prelude::*;
 use grammar::{RuleId,load_grammar_str};
 
 #[derive(Debug, Clone)]
 pub enum Opcode {
     // Return: (from nonterminal)
     //   nameidx - production name
-    Return { nameidx: Option<usize> },
+    Return { ntname: String, nameidx: Option<usize> },
     // Fork:
     //   ntidx - nonterminal name index
     //   nameidx - variable name
@@ -39,6 +42,7 @@ impl CompiledGrammar {
     }
 
     // return a list of addresses associated with a nonterm name
+
     pub fn lookup_nonterm(&self, nt_name : &str) -> Vec<usize> {
 
         match self.strings.iter().position(|x| x == nt_name) {
@@ -56,7 +60,7 @@ impl CompiledGrammar {
     pub fn display(&self) {
         let mut ip = 0;
         for op in &self.opcodes {
-            println!("{} {:?}", ip, op);
+            println!("__ {} = {:?}", ip, op);
             ip += 1;
         }
     }
@@ -92,9 +96,12 @@ impl CompiledGrammar {
     //
     // name: optional name for the production
     //
-    fn op_return(&mut self, name : Option<&String>) {
+    fn op_return(&mut self, ntname: &String, name : Option<&String>) {
         let nameidx = name.map(|s| self.add_string(s));
-        self.opcodes.push(Opcode::Return { nameidx : nameidx });
+        self.opcodes.push(Opcode::Return {
+            ntname: ntname.clone(),
+            nameidx : nameidx
+        });
     }
 
     //
@@ -151,7 +158,7 @@ pub fn compile_grammar(gs : &str) -> CompiledGrammar {
                     }
                 }
             }
-            cg.op_return(prod.name.as_ref());
+            cg.op_return(&nt, prod.name.as_ref());
         }
     }
 
