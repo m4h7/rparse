@@ -5,16 +5,50 @@ mod tests {
 
     use std::collections::VecDeque;
     use tokenize::{Tokenizer,Token};
-    use compiler::compile_grammar;
+    use compiler::{compile_grammar, compile_grammar_file};
     use htmltokenize::{tokenize_html,HTMLToken};
-    use vm::run;
+    use vm::{run, StreamingHandler};
 
     use std::fs::File;
     use std::io::prelude::*;
     use std::path::Path;
 
+    struct ParsedData {
+        counter: usize,
+    }
+
+    impl ParsedData {
+        fn new() -> ParsedData {
+            ParsedData { counter : 0 }
+        }
+        fn inc(&mut self) {
+            self.counter += 1;
+        }
+        fn dec(&mut self) {
+            self.counter -= 1;
+        }
+        fn count(&self) -> usize {
+            println!("counter ----> {}", self.counter);
+            self.counter
+        }
+    }
+
+    impl StreamingHandler for ParsedData {
+        fn start(&mut self, ntname: &String, name: &Option<String>) {
+            self.inc();
+            println!("--- start {} {:?} [{}]", ntname, name, self.count());
+        }
+        fn end(&mut self, ntname: &String, xname: &Option<String>) {
+            self.dec();
+            println!("--- end {} {:?} [{}]", ntname, xname, self.count());
+        }
+        fn term(&mut self, tokidx: usize, name: &Option<String>) {
+            println!("--- term = {} {:?}", tokidx, name);
+        }
+    }
+
     #[test]
-    fn it_works() {
+    fn tokenizer_works() {
         let mut tokens : VecDeque<Token> = VecDeque::new();
         let input_str = "hello (world)+ 'q[ u ]o' \"dq\" \\\"x\\\"";
                        //012345678901234567890123456789
@@ -80,49 +114,44 @@ mod tests {
         assert!(tokens.is_empty());
     }
 
-    pub struct ASTNode {
-        x : i32
-    }
-
     #[test]
     fn load_grammar_test() {
 
-        fn match_eq(a : &str, b : &str) -> bool {
-            a == b
-        }
-
-        let gs = "X : z z z `z` | a(q) b(w) c(e) `x`; Y : w(p) X(r) q(i) `y`;";
+        let gs = "WORLDTYPE : 'z' 'z' 'z' `z` |
+                              'sunny'(sunnyname) 'world'(worldname) `wtyperule`;
+                  OTHERTYPE : 'other'(othername) 'another'(anothername) `otherrule`;
+                  START : 'begin'(beginname) WORLDTYPE(wtypent) OTHERTYPE 'end'(endname) `startrule`;";
         let c = compile_grammar(gs);
         c.display();
 
         let mut tokens = Vec::<String>::new();
-        tokens.push("w".to_string());
-        tokens.push("a".to_string());
-        tokens.push("b".to_string());
-        tokens.push("c".to_string());
-        tokens.push("q".to_string());
+        tokens.push("begin".to_string());
+        tokens.push("sunny".to_string());
+        tokens.push("world".to_string());
+        tokens.push("other".to_string());
+        tokens.push("another".to_string());
+        tokens.push("end".to_string());
 
-        let pt = run(&tokens, "Y", &c, match_eq);
+        // "Y" - START grammar rule
+        // &c - grammar to use
+        // 3rd arg: match function
+        let parsed_trees = run("START", &c, |s, i| { tokens[i] == s });
 
-        assert_eq!(pt.count(), 1);
+        assert_eq!(parsed_trees.count(), 1);
 
-        fn fx(v : &String) -> ASTNode {
-            println!("fx called with {}", v);
-            ASTNode { x : 0 }
-        };
-
-        pt.execute(0, &tokens, &fx );
+        let mut d = ParsedData::new();
+        parsed_trees.execute(0, &mut d);
+        assert_eq!(d.count(), 0);
+//        print_ast(&ast, &tokens, 0);
     }
 
     #[test]
     fn rec_grammar_test() {
-        fn match_eq(a : &str, b : &str) -> bool {
-            println!("match_eq: {} v {}", a, b);
-            a != b
-        }
-        let gs = "X : a X | b;";
+        let gs = "X : 'a' X | 'b';";
         let c = compile_grammar(gs);
+        println!("rec compiled -------------");
         c.display();
+        println!("==========================");
 
         let mut tokens = Vec::<String>::new();
         tokens.push("a".to_string());
@@ -131,7 +160,7 @@ mod tests {
         tokens.push("a".to_string());
         tokens.push("b".to_string());
 
-        let pt = run(&tokens, "X", &c, match_eq);
+        let pt = run("X", &c, |s, i| { tokens[i] == s });
 
         assert_eq!(pt.count(), 1);
     }
@@ -168,8 +197,17 @@ mod tests {
     }
 
     #[test]
-    fn html_tokenize_file_test() {
-        let path = Path::new("/tmp/_aa8.html");
+    fn html_parse_test() {
+        let html_tokens = tokenize_html("<html lang=\"en\"><head><TITLE>hello</TITLE></head><body></body></html>");
+        let gs = "S : X; X : '<html>' '<head>' '<title>' 'hello' '</title>' '</head>' '<body>' '</body>' '</html>';";
+        let cg = compile_grammar(gs);
+        let pt = run("S", &cg, |s, i| { html_tokens[i].value == s });
+        assert_eq!(pt.count(), 1);
+    }
+
+//    #[test]
+    fn html_tokenize_file_test(fname: &str) -> Vec<HTMLToken> {
+        let path = Path::new(fname);
         let mut file = match File::open(&path) {
             Err(why) => panic!("couldn't open file: {}", why),
             Ok(file) => file
@@ -179,10 +217,14 @@ mod tests {
             Err(why) => panic!("err read {}", why),
             Ok(_) => {
                 let tokens = tokenize_html(&s);
-                for t in tokens {
-//                    println!("token {:?}", t);
+                let mut num = 0;
+                for t in &tokens {
+                    println!("{} token {:?}", num, t);
+                    num += 1;
                 }
+                tokens
             }
         }
     }
+
 }
