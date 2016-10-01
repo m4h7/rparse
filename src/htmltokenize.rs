@@ -12,17 +12,42 @@ fn asciilowerchar(a : char) -> char {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct KeyValue {
+  key: String,
+  value: String,
+}
+
+impl KeyValue {
+    pub fn new<T, S>(key: T, value: S) -> KeyValue
+        where T: Into<String>, S: Into<String> {
+        KeyValue { key: key.into(), value: value.into() }
+    }
+}
+
+///
+/// HTMLToken
+///
+#[derive(Debug, Clone)]
 pub struct HTMLToken {
-    attribs : Option<HashMap<String, String>>,
+    pub attribs : Vec<KeyValue>,
     pub value : String, // tag name if opens||closes or text
 }
 
 impl HTMLToken {
+    pub fn get_attrib_value(&self, name: &str) -> Option<String> {
+        let index = self.attribs.iter().position(|ref kv| kv.key == name);
+        match index {
+            Some(idx) => {
+                Some(self.attribs[idx].value.clone())
+            }
+            None => None
+        }
+    }
 
-    fn parse_attribs(v : &[char]) -> Option<HashMap<String, String>> {
+    fn parse_attribs(v : &[char]) -> Vec<KeyValue> {
         let mut j = 0;
-        let mut r : HashMap<String, String> = HashMap::new();
+        let mut r = Vec::<KeyValue>::new();
         while j < v.len() {
             let k_start = j;
             while j < v.len() && v[j] != '=' && v[j] != ' ' {
@@ -56,21 +81,17 @@ impl HTMLToken {
                 }
                 let k : String = v[k_start..k_end].iter().cloned().collect();
                 let v : String = v[v_start..v_end].iter().cloned().collect();
-                r.insert(k, v);
+                r.push(KeyValue::new(k, v));
             } else { // no value, just key
                 let k : String = v[k_start..k_end].iter().cloned().collect();
-                r.insert(k, String::new());
+                r.push(KeyValue::new(k, ""));
             }
             // skip whitespace
             while j < v.len() && v[j] == ' ' {
                 j += 1;
             }
         }
-        if r.len() > 0 {
-            Some(r)
-        } else {
-            None
-        }
+        r
     }
 
     pub fn parse(s : &str) -> HTMLToken{
@@ -97,16 +118,20 @@ impl HTMLToken {
         }
         let attrib_end = j;
 
-        let mut attribs : Option<HashMap<String, String>> = None;
+        let mut attribs: Vec<KeyValue>;
 
         if attrib_start != attrib_end {
             attribs = HTMLToken::parse_attribs(&v[attrib_start..attrib_end]);
+        } else {
+            attribs = Vec::<KeyValue>::new();
         }
+
         // get the end of the token
         while j < v.len() {
             r.push(v[j]);
             j += 1;
         }
+
         HTMLToken {
             attribs : attribs,
             value : String::from(r)
@@ -115,7 +140,7 @@ impl HTMLToken {
 
     pub fn text(s : &str) -> HTMLToken {
         HTMLToken {
-            attribs : None,
+            attribs: Vec::<KeyValue>::new(),
             value : String::from(s)
         }
     }
