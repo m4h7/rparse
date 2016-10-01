@@ -164,3 +164,20 @@ pub fn compile_grammar(gs : &str) -> CompiledGrammar {
 
     cg
 }
+
+pub fn compile_grammar_file<S : Into<String>>(filename: S) -> CompiledGrammar
+{
+    let name = filename.into();
+    let path = Path::new(name.as_str());
+    let mut file = match File::open(&path) {
+        Err(why) => panic!("couldn't open file: {}", why),
+        Ok(file) => file
+    };
+    let mut s = String::new();
+    match file.read_to_string(&mut s) {
+        Err(why) => {
+            panic!("Error reading file");
+        },
+        Ok(_) => compile_grammar(&s)
+    }
+}
