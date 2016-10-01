@@ -160,7 +160,18 @@ impl Grammar {
                         if self.nonterm_prod_map.contains_key(s) {
                             Some(RuleId::Nonterminal(s.clone()))
                         } else {
-                            None
+                            let mut start = 0;
+                            let mut end = s.len();
+                            for (i, c) in s.char_indices() {
+                                if i == 0 && c == '\'' {
+                                    start = i + 1;
+                                }
+                                if i == s.len() - 1 && c == '\'' {
+                                    end = i;
+                                }
+                            }
+                            let ns = s[start..end].to_string();
+                            Some(RuleId::Terminal(ns))
                         }
                     }
                     _ => None
