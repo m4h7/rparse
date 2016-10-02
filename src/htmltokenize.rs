@@ -259,13 +259,15 @@ impl Buf {
      */
     pub fn extract_without(&mut self, until : char) -> String {
         let mut s = String::new();
+        let mut last = self.v.len(); // default value
         for j in self.i..self.v.len() {
             if self.v[j] == until {
-                self.i = j;
+                last = j;
                 break;
             }
             s.push(self.v[j]);
         }
+        self.i = last;
         s
     }
 }

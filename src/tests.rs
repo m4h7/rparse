@@ -204,6 +204,13 @@ mod tests {
     }
 
     #[test]
+    fn html_tokenize_regression() {
+        let s = "<b>Fatal error</b>:  Allowed memory size of 8388608 bytes exhausted (tried to allocate 32501 bytes) in <b>/home/path/x.php</b> on line <b>180</b><br />\0";
+        let html_tokens = tokenize_html(s);
+        assert_eq!(html_tokens[0].value, "<b>");
+    }
+
+    #[test]
     fn html_parse_test() {
         let html_tokens = tokenize_html("<html lang=\"en\"><head><TITLE>hello</TITLE></head><body></body></html>");
         let gs = "S : X; X : '<html>' '<head>' '<title>' 'hello' '</title>' '</head>' '<body>' '</body>' '</html>';";
