@@ -295,7 +295,6 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                         runnable.push(vmt);
                         created += 1;
                     }
-                    println!("created {}", created);
                 }
                 Opcode::Return { ntname, nameidx } => {
                     // nameidx is the prod name for callback
