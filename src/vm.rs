@@ -1,6 +1,43 @@
 use std::usize;
 use compiler::{CompiledGrammar, Opcode};
 
+struct SharedStackItem<U> {
+    u: U,
+    prev: usize,
+}
+
+struct SharedStack<U> {
+    stack: Vec<SharedStackItem<U>>,
+}
+
+impl<U> SharedStack<U> {
+    fn new() -> SharedStack<U> {
+        SharedStack {
+            stack: Vec::new(),
+        }
+    }
+
+    // returns new sp
+    fn push(&mut self, sp: usize, u: U) -> usize {
+        let si = SharedStackItem {
+            u: u,
+            prev: sp,
+        };
+        self.stack.push(si);
+        self.stack.len() - 1
+    }
+
+    fn top(&self, sp: usize) -> &U {
+        let si = &self.stack[sp];
+        &si.u
+    }
+
+    fn pop(&self, sp: usize) -> usize {
+        let si = &self.stack[sp];
+        si.prev
+    }
+}
+
 //
 // L. RuleNonTerm (prev=M)
 //  M. RuleTermValue (prev=N)
@@ -39,19 +76,19 @@ pub struct ParsedTrees {
     // fragments vector
     fragments : Vec<ParseFragment>,
     // indexes into 'fragments' that identify the end of an linked list
-    tails : Vec<usize>,
+    tails : Vec<(usize, usize)>,
 }
 
 impl ParsedTrees {
 
     pub fn new(
         fragments : Vec<ParseFragment>,
-        tails : Vec<usize>
+        tails : Vec<(usize, usize)>
     ) -> ParsedTrees {
 
         ParsedTrees {
             fragments : fragments,
-            tails : tails,
+            tails: tails,
         }
     }
 
@@ -60,6 +97,17 @@ impl ParsedTrees {
      */
     pub fn count(&self) -> usize {
         self.tails.len()
+    }
+
+    /**
+     * Return the number of successul parses that
+     * cover the tokens 0 to n
+     */
+    pub fn count_at_n(&self, n: usize) -> usize {
+        self.tails
+            .iter()
+            .filter(|&x| x.1 >= n)
+            .count()
     }
 
     /**
@@ -132,7 +180,9 @@ impl ParsedTrees {
         &self,
         tidx : usize,
         handler : &mut U) {
-        let mut curr = self.tails[tidx];
+        let mut tail = self.tails[tidx];
+        let (fragidx, _) = tail;
+        let mut curr = fragidx;
         let mut indexes = Vec::<usize>::new();
         while curr != usize::MAX {
             indexes.push(curr);
@@ -156,8 +206,8 @@ enum VMThreadState {
 struct VMThread {
     // thread state
     state: VMThreadState,
-    // return address stack
-    ret : Vec<usize>,
+    // pointer into return address stack or usize::MAX
+    sp: usize,
     // instruction pointer
     ip : usize,
     // fragment index
@@ -176,7 +226,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
     let mut fragments = Vec::<ParseFragment>::new();
 
     // list of finished parses (index into fragments)
-    let mut tails : Vec<usize> = Vec::new();
+    let mut tails : Vec<(usize, usize)> = Vec::new();
 
     // list of thread ids
     let mut runnable = Vec::new();
@@ -193,13 +243,14 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
         });
         threads.push(VMThread {
             state: VMThreadState::Runnable,
-            ret : Vec::new(),
+            sp: usize::MAX,
             ip : initial_thread_addr,
             fragidx : fragments.len() - 1,
         });
         runnable.push(threads.len() - 1);
     }
 
+    let mut sharedStack = SharedStack::<usize>::new();
     let mut tokidx = 0;
 
     while runnable.len() > 0  {
@@ -237,13 +288,10 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                         let mut vmt = VMThread {
                             state: VMThreadState::Runnable,
                             // copy stack from parent thread
-                            ret : threads[i].ret.clone(),
+                            sp: sharedStack.push(threads[i].sp, threads[i].ip),
                             ip : initial_thread_addr,
                             fragidx : cur_fragidx, // [1]
                         };
-
-                        // push return value
-                        vmt.ret.push(threads[i].ip);
 
                         // add new thread
                         threads.push(vmt);
@@ -257,13 +305,14 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                 }
                 Opcode::Return { ntname, nameidx } => {
                     // nameidx is the prod name for callback
-                    let ret = threads[i].ret.pop();
+//                    let ret = threads[i].si.pop();
 //                    println!("{}: Opcode::Return {:?}",
 //                             threads[i].ip,
 //                             ret);
                     // check if the thread has a return value
                     // or whether it is a top-level thread
-                    if ret.is_some() {
+                    if threads[i].sp != usize::MAX {
+                        let ret = sharedStack.top(threads[i].sp);
                         let prev_fragidx = threads[i].fragidx;
                         fragments.push(ParseFragment::RuleNonTerm {
                             child: prev_fragidx,
@@ -274,13 +323,15 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
 
                         let cur_fragidx = fragments.len() - 1;
 
-                        threads[i].ip = ret.unwrap() + 1;
+                        threads[i].sp = sharedStack.pop(threads[i].sp);
+                        threads[i].ip = ret + 1;
                         threads[i].fragidx = cur_fragidx;
                         runnable.push(i);
                     } else {
                         threads[i].state = VMThreadState::ParseFinished;
                         // add the current fragidx to the list of finished parses
-                        tails.push(threads[i].fragidx);
+                        let tail = (threads[i].fragidx, tokidx);
+                        tails.push(tail);
                     }
                 }
             }

@@ -146,12 +146,57 @@ mod tests {
     }
 
     #[test]
-    fn rec_grammar_test() {
-        let gs = "X : 'a' X | 'b';";
+    fn empty_nt_test() {
+        let gs = r#"
+          A : 'a';
+          E : ;
+          X : A E A A A;
+        "#;
         let c = compile_grammar(gs);
-        println!("rec compiled -------------");
-        c.display();
-        println!("==========================");
+        // c.display();
+
+        let mut tokens = Vec::<String>::new();
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+
+        let pt = run("X", &c, |s, i| { i < tokens.len() && tokens[i] == s });
+
+        assert_eq!(pt.count(), 1);
+    }
+
+    #[test]
+    fn empty2_nt_test() {
+        let gs = r#"
+          A : 'a';
+          E : 'e' | ;
+          X : A E A A A;
+        "#;
+        let c = compile_grammar(gs);
+        // c.display();
+
+        let mut tokens = Vec::<String>::new();
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+
+        let pt = run("X", &c, |s, i| { i < tokens.len() && tokens[i] == s });
+
+        assert_eq!(pt.count(), 1);
+    }
+
+    #[test]
+    fn rec_grammar_test() {
+        let gs = r#"
+          X
+            : 'a' X
+            | 'b'
+            ;
+        "#;
+        let c = compile_grammar(gs);
+        // c.display();
 
         let mut tokens = Vec::<String>::new();
         tokens.push("a".to_string());
@@ -163,6 +208,37 @@ mod tests {
         let pt = run("X", &c, |s, i| { tokens[i] == s });
 
         assert_eq!(pt.count(), 1);
+    }
+
+    #[test]
+    fn rec2_grammar_test() {
+        let gs = r#"
+          A : 'w' ;
+          X
+            : 'a' X
+            |
+            ;
+        "#;
+        let c = compile_grammar(gs);
+        c.display();
+
+        let mut tokens = Vec::<String>::new();
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("a".to_string());
+        tokens.push("w".to_string());
+
+        let pt = run("X", &c, |s, i| { i < tokens.len() && tokens[i] == s });
+
+        assert_eq!(pt.count_at_n(tokens.len() - 1), 1);
     }
 
     #[test]
@@ -217,28 +293,6 @@ mod tests {
         let cg = compile_grammar(gs);
         let pt = run("S", &cg, |s, i| { html_tokens[i].value == s });
         assert_eq!(pt.count(), 1);
-    }
-
-//    #[test]
-    fn html_tokenize_file_test(fname: &str) -> Vec<HTMLToken> {
-        let path = Path::new(fname);
-        let mut file = match File::open(&path) {
-            Err(why) => panic!("couldn't open file: {}", why),
-            Ok(file) => file
-        };
-        let mut s = String::new();
-        match file.read_to_string(&mut s) {
-            Err(why) => panic!("err read {}", why),
-            Ok(_) => {
-                let tokens = tokenize_html(&s);
-                let mut num = 0;
-                for t in &tokens {
-                    println!("{} token {:?}", num, t);
-                    num += 1;
-                }
-                tokens
-            }
-        }
     }
 
 }
