@@ -17,6 +17,10 @@ impl<U> SharedStack<U> {
         }
     }
 
+    fn len(&self) -> usize {
+        self.stack.len()
+    }
+
     // returns new sp
     fn push(&mut self, sp: usize, u: U) -> usize {
         let si = SharedStackItem {
@@ -255,6 +259,9 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
 
     while runnable.len() > 0  {
 
+        println!("threads {} fragments {} stack {}",
+                 threads.len(), fragments.len(), sharedStack.len());
+
         while runnable.len() > 0 {
 
             let i = runnable.pop().unwrap();
@@ -285,7 +292,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                         });
 
                         let cur_fragidx = fragments.len() - 1;
-                        let mut vmt = VMThread {
+                        let vmt = VMThread {
                             state: VMThreadState::Runnable,
                             // copy stack from parent thread
                             sp: sharedStack.push(threads[i].sp, threads[i].ip),
