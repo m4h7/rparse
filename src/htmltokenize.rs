@@ -144,8 +144,6 @@ impl HTMLToken {
             j += 1;
         }
 
-        println!("token attrib_start={} attrib_end={} len={} r='{}' s='{}'",
-                 attrib_start, attrib_end, v.len(), r, s);
         HTMLToken {
             attribs: attribs,
             value: String::from(r),
