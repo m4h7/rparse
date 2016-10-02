@@ -253,9 +253,6 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
 
     while runnable.len() > 0  {
 
-        println!("runnable {} fragments {} stack {}",
-                 runnable.len(), fragments.len(), sharedStack.len());
-
         while runnable.len() > 0 {
 
             let mut thread = runnable.pop().unwrap();
