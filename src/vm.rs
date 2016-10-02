@@ -55,14 +55,18 @@ pub enum ParseFragment {
     // RuleStart without parent is the top node
     RuleStart {
         parent : Option<usize>,
-        name: Option<String>,
+        name: Option<usize>,
         ntname: String,        // nonterm name
     },
-    RuleTermValue { prev : usize, tokidx : usize, name : Option<String> },
+    RuleTermValue {
+        prev : usize,
+        tokidx : usize,
+        name: Option<usize>, // string index
+    },
     RuleNonTerm {
-      child : usize,
-      ntname: String,
-      ev_name : Option<String>
+        child : usize,
+        ntname: String,
+        ev_name : Option<usize>
     },
 }
 
@@ -81,18 +85,22 @@ pub struct ParsedTrees {
     fragments : Vec<ParseFragment>,
     // indexes into 'fragments' that identify the end of an linked list
     tails : Vec<(usize, usize)>,
+    // string table
+    strings: Vec<String>,
 }
 
 impl ParsedTrees {
 
     pub fn new(
         fragments : Vec<ParseFragment>,
-        tails : Vec<(usize, usize)>
+        tails : Vec<(usize, usize)>,
+        strings: Vec<String>
     ) -> ParsedTrees {
 
         ParsedTrees {
             fragments : fragments,
             tails: tails,
+            strings: strings,
         }
     }
 
@@ -134,23 +142,24 @@ impl ParsedTrees {
             // RuleStart
             // current node is the child of parent
             &ParseFragment::RuleStart { ref ntname, ref name, .. } => {
-                handler.start(&ntname, &name);
+                let name_string = &name.map(|x| self.strings[x].clone());
+                handler.start(&ntname, name_string);
                 if index < indexes.len() - 1 {
                     self.stream(indexes, index + 1, handler);
                 }
                 if index == 0 {
-                    handler.end(&ntname, &name);
+                    handler.end(&ntname, name_string);
                 }
             },
             &ParseFragment::RuleTermValue { tokidx, ref name, .. } => {
-                handler.term(tokidx, name);
+                handler.term(tokidx, &name.map(|x| self.strings[x].clone()));
                 if index < indexes.len() - 1 {
                     // output sibling which comes before this term
                     self.stream(indexes, index + 1, handler);
                 }
             },
             &ParseFragment::RuleNonTerm { ref ev_name, ref ntname, .. } => {
-                handler.end(ntname, ev_name);
+                handler.end(ntname, &ev_name.map(|x| self.strings[x].clone()));
                 if index < indexes.len() - 1 {
                     // output sibling which comes before this term
                     self.stream(indexes, index + 1, handler);
@@ -197,19 +206,7 @@ impl ParsedTrees {
     }
 }
 
-
-#[derive(PartialEq, Debug)]
-enum VMThreadState {
-    ForkParent,
-    MatchFailed,
-    Runnable,
-    Match,
-    ParseFinished,
-}
-
 struct VMThread {
-    // thread state
-    state: VMThreadState,
     // pointer into return address stack or usize::MAX
     sp: usize,
     // instruction pointer
@@ -226,16 +223,15 @@ struct VMThread {
 pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTrees
     where F : Fn(&str, usize) -> bool {
 
-    let mut threads : Vec<VMThread> = Vec::new();
     let mut fragments = Vec::<ParseFragment>::new();
 
     // list of finished parses (index into fragments)
     let mut tails : Vec<(usize, usize)> = Vec::new();
 
     // list of thread ids
-    let mut runnable = Vec::new();
+    let mut runnable : Vec<VMThread> = Vec::new();
     // list of threads that need to perform a MATCH operation
-    let mut matchable = Vec::new();
+    let mut matchable : Vec<VMThread> = Vec::new();
 
     for initial_thread_addr in cg.lookup_nonterm(nt_start) {
         fragments.push({
@@ -245,13 +241,11 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                 name: None,
             }
         });
-        threads.push(VMThread {
-            state: VMThreadState::Runnable,
+        runnable.push(VMThread {
             sp: usize::MAX,
             ip : initial_thread_addr,
             fragidx : fragments.len() - 1,
         });
-        runnable.push(threads.len() - 1);
     }
 
     let mut sharedStack = SharedStack::<usize>::new();
@@ -259,21 +253,19 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
 
     while runnable.len() > 0  {
 
-        println!("threads {} fragments {} stack {}",
-                 threads.len(), fragments.len(), sharedStack.len());
+        println!("runnable {} fragments {} stack {}",
+                 runnable.len(), fragments.len(), sharedStack.len());
 
         while runnable.len() > 0 {
 
-            let i = runnable.pop().unwrap();
-            assert!(threads[i].state == VMThreadState::Runnable);
+            let mut thread = runnable.pop().unwrap();
 
 //            println!("** executing {}:{:?} (th {})", threads[i].ip, cg.at(threads[i].ip), i);
             // fetch instruction at 'ip'
-            match cg.at(threads[i].ip) {
+            match cg.at(thread.ip) {
                 Opcode::Match { validx, nameidx } => {
                     // suspend thread at match
-                    threads[i].state = VMThreadState::Match;
-                    matchable.push(i);
+                    matchable.push(thread);
                 }
                 Opcode::Fork { ntidx, nameidx } => {
 
@@ -281,34 +273,29 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                     let nt = &cg.strings[ntidx];
 //                    println!("{}: Opcode::Fork {}", threads[i].ip, nt);
 
+                    let mut created = 0;
                     for initial_thread_addr in cg.lookup_nonterm(nt) {
 
                         // ordering: [1] depends on [2]
                         fragments.push(ParseFragment::RuleStart {
-                            parent: Some(threads[i].fragidx), // [2]
+                            parent: Some(thread.fragidx), // [2]
                             ntname: nt.to_string(),
-                            name: nameidx.map(
-                                    |x| cg.strings[x].clone()),
+                            name: nameidx,
                         });
 
                         let cur_fragidx = fragments.len() - 1;
                         let vmt = VMThread {
-                            state: VMThreadState::Runnable,
                             // copy stack from parent thread
-                            sp: sharedStack.push(threads[i].sp, threads[i].ip),
+                            sp: sharedStack.push(thread.sp, thread.ip),
                             ip : initial_thread_addr,
                             fragidx : cur_fragidx, // [1]
                         };
 
-                        // add new thread
-                        threads.push(vmt);
-
                         // this new thread can run immediately
-                        runnable.push(threads.len() - 1);
+                        runnable.push(vmt);
+                        created += 1;
                     }
-
-                    // parent thread (that forked) is stopped
-                    threads[i].state = VMThreadState::ForkParent;
+                    println!("created {}", created);
                 }
                 Opcode::Return { ntname, nameidx } => {
                     // nameidx is the prod name for callback
@@ -318,63 +305,62 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
 //                             ret);
                     // check if the thread has a return value
                     // or whether it is a top-level thread
-                    if threads[i].sp != usize::MAX {
-                        let ret = sharedStack.top(threads[i].sp);
-                        let prev_fragidx = threads[i].fragidx;
+                    if thread.sp != usize::MAX {
+                        let ret = sharedStack.top(thread.sp);
+                        let prev_fragidx = thread.fragidx;
                         fragments.push(ParseFragment::RuleNonTerm {
                             child: prev_fragidx,
                             ntname: ntname.clone(),
                             // remap int option to string option
-                            ev_name: nameidx.map(|x| cg.strings[x].clone() ),
+                            ev_name: nameidx,
                         });
 
                         let cur_fragidx = fragments.len() - 1;
 
-                        threads[i].sp = sharedStack.pop(threads[i].sp);
-                        threads[i].ip = ret + 1;
-                        threads[i].fragidx = cur_fragidx;
-                        runnable.push(i);
+                        thread.sp = sharedStack.pop(thread.sp);
+                        thread.ip = ret + 1;
+                        thread.fragidx = cur_fragidx;
+                        runnable.push(thread);
                     } else {
-                        threads[i].state = VMThreadState::ParseFinished;
                         // add the current fragidx to the list of finished parses
-                        let tail = (threads[i].fragidx, tokidx);
+                        let tail = (thread.fragidx, tokidx);
                         tails.push(tail);
                     }
                 }
             }
         }
+        assert_eq!(runnable.len(), 0);
 
         while matchable.len() > 0 {
-            let j = matchable.pop().unwrap();
-            assert!(threads[j].state  == VMThreadState::Match);
+            let mut thread = matchable.pop().unwrap();
 
-            match cg.at(threads[j].ip) {
+            match cg.at(thread.ip) {
                 Opcode::Match { validx, nameidx } => {
                     if match_fn(&cg.strings[validx], tokidx) {
                         // allow this thread to proceed
-                        threads[j].state = VMThreadState::Runnable;
-                        threads[j].ip += 1;
-                        runnable.push(j);
+                        thread.ip += 1;
+                        let prev_fragidx = thread.fragidx;
+                        runnable.push(thread);
 
-                        let prev_fragidx = threads[j].fragidx;
                         fragments.push(ParseFragment::RuleTermValue {
                             prev: prev_fragidx,
                             tokidx: tokidx,
-                            name: nameidx.map(|x| cg.strings[x].clone()),
+                            name: nameidx,
                         });
 
                         let current_fragidx = fragments.len() - 1;
-                        threads[j].fragidx = current_fragidx;
-                    } else {
-                        threads[j].state = VMThreadState::MatchFailed;
+                        thread.fragidx = current_fragidx;
                     }
                 },
-                _ => {}
+                _ => {
+                    panic!("matchable not at Match instruction");
+                }
             }
         }
+        assert_eq!(matchable.len(), 0);
 
         tokidx += 1;
     }
 
-    ParsedTrees::new(fragments, tails)
+    ParsedTrees::new(fragments, tails, cg.strings.clone())
 }
