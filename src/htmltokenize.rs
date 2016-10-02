@@ -97,26 +97,38 @@ impl HTMLToken {
     pub fn parse(s : &str) -> HTMLToken{
         let mut v : Vec<char> = Vec::new();
 
+        // convert string to Vec<char>
         for (_, c) in s.char_indices() {
             v.push(c);
         }
+
         let mut r = String::new();
-        // find space in 'v' if there is any
+        // get string before the first space
         let mut j = 0;
         while j < v.len() && v[j] != ' ' {
             r.push(asciilowerchar(v[j]));
             j += 1;
         }
-        // skip the whitespace if any
+        // skip the subsequent whitespace, if any
         while j < v.len() && v[j] == ' ' {
             j += 1;
         }
+
         let attrib_start = j;
         // check for attribs, stop on '>' or '/>'
-        while (j < v.len() && v[j] != '>') || (j + 1 < v.len() && v[j] != '/' && v[j+1] != '>') {
+        while j < v.len() {
+            if v[j] == '>' {
+                break;
+            }
+            if v[j] == '/' && j + 1 < v.len() && v[j+1] == '>' {
+                break;
+            }
             j += 1;
         }
-        let attrib_end = j;
+        let mut attrib_end = j;
+        if attrib_start != attrib_end {
+            attrib_end += 1;
+        }
 
         let mut attribs: Vec<KeyValue>;
 
@@ -132,9 +144,11 @@ impl HTMLToken {
             j += 1;
         }
 
+        println!("token attrib_start={} attrib_end={} len={} r='{}' s='{}'",
+                 attrib_start, attrib_end, v.len(), r, s);
         HTMLToken {
-            attribs : attribs,
-            value : String::from(r)
+            attribs: attribs,
+            value: String::from(r),
         }
     }
 
@@ -254,7 +268,6 @@ impl Buf {
         }
         s
     }
-
 }
 
 pub fn tokenize_html(s : &str) -> Vec<HTMLToken> {
@@ -274,7 +287,7 @@ pub fn tokenize_html(s : &str) -> Vec<HTMLToken> {
             v.push(t);
         } else { // text node
             let s = b.extract_without('<');
-            // check is s is empty / whitespace
+            // check if s is empty / whitespace
             let trimmed = s.trim();
             if trimmed.len() > 0 {
                 v.push(HTMLToken::text(trimmed));

@@ -175,12 +175,19 @@ mod tests {
 
         let t2 = HTMLToken::parse("<A HREF=\"#\">");
         assert_eq!(t2.value, "<a>");
+        assert_eq!(t2.get_attrib_value("HREF"), Some("#".to_string()));
 
         let t3 = HTMLToken::parse("<a href=\"http://www.google.com\" target=\"_blank\">");
         assert_eq!(t3.value, "<a>");
 
         let t4 = HTMLToken::parse("<a href=\"http://www.bing.com/query?q=query\"/>");
-        assert_eq!(t4.value, "<a>");
+        assert_eq!(t4.value, "<a/>");
+
+        let t5 = HTMLToken::parse("<br >");
+        assert_eq!(t5.value, "<br>");
+
+        let t6 = HTMLToken::parse("<br />");
+        assert_eq!(t6.value, "<br/>");
     }
 
     #[test]
