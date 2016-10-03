@@ -341,11 +341,21 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
 
             match cg.at(thread.ip) {
                 Opcode::Match { validx, nameidx } => {
-                    if match_fn(&cg.strings[validx], tokidx) {
-                        if matched[validx] != 0 {
-                            println!("doubel checked!!!!!!");
+                    let mut match_result = false;
+                    // reuse previous match result
+                    if matched[validx] == 1 {
+                        match_result = true;
+                    } else if matched[validx] == -1 {
+                        match_result = false;
+                    } else {
+                        match_result = match_fn(&cg.strings[validx], tokidx);
+                        if match_result {
+                            matched[validx] = 1;
+                        } else {
+                            matched[validx] = -1;
                         }
-                        matched[validx] = 1;
+                    }
+                    if match_result {
                         // allow this thread to proceed
                         thread.ip += 1;
                         let prev_fragidx = thread.fragidx;
@@ -358,8 +368,6 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                         });
 
                         thread.fragidx = fragments.len() - 1;
-                    } else {
-                        matched[validx] = -1;
                     }
                 },
                 _ => {
