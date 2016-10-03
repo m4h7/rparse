@@ -8,7 +8,7 @@ use grammar::{RuleId,load_grammar_str};
 pub enum Opcode {
     // Return: (from nonterminal)
     //   nameidx - production name
-    Return { ntname: String, nameidx: Option<usize> },
+    Return { ntnameidx: usize, nameidx: Option<usize> },
     // Fork:
     //   ntidx - nonterminal name index
     //   nameidx - variable name
@@ -42,16 +42,10 @@ impl CompiledGrammar {
     }
 
     // return a list of addresses associated with a nonterm name
-
-    pub fn lookup_nonterm(&self, nt_name : &str) -> Vec<usize> {
-
-        match self.strings.iter().position(|x| x == nt_name) {
-            Some(nt_idx) => {
-                match self.nt_names.get(&nt_idx) {
-                    Some(v) => v.clone(),
-                    None => Vec::new()
-                }
-            }
+    // TODO: remove the .clone()
+    pub fn lookup_nonterm_idx(&self, ntidx: usize) -> Vec<usize> {
+        match self.nt_names.get(&ntidx) {
+            Some(v) => v.clone(),
             None => Vec::new()
         }
     }
@@ -63,6 +57,10 @@ impl CompiledGrammar {
             println!("__ {} = {:?}", ip, op);
             ip += 1;
         }
+    }
+
+    pub fn lookup_string(&self, s: &str) -> Option<usize> {
+        self.strings.iter().position(|x| x == s)
     }
 
     fn add_string(&mut self, s : &str) -> usize {
@@ -98,8 +96,9 @@ impl CompiledGrammar {
     //
     fn op_return(&mut self, ntname: &String, name : Option<&String>) {
         let nameidx = name.map(|s| self.add_string(s));
+        let ntnameidx = self.add_string(ntname);
         self.opcodes.push(Opcode::Return {
-            ntname: ntname.clone(),
+            ntnameidx: ntnameidx,
             nameidx : nameidx
         });
     }

@@ -34,15 +34,15 @@ mod tests {
     }
 
     impl StreamingHandler for ParsedData {
-        fn start(&mut self, ntname: &String, name: &Option<String>) {
+        fn start(&mut self, ntname: &String, name: &Option<&String>) {
             self.inc();
             println!("--- start {} {:?} [{}]", ntname, name, self.count());
         }
-        fn end(&mut self, ntname: &String, xname: &Option<String>) {
+        fn end(&mut self, ntname: &String, xname: &Option<&String>) {
             self.dec();
             println!("--- end {} {:?} [{}]", ntname, xname, self.count());
         }
-        fn term(&mut self, tokidx: usize, name: &Option<String>) {
+        fn term(&mut self, tokidx: usize, name: &Option<&String>) {
             println!("--- term = {} {:?}", tokidx, name);
         }
     }

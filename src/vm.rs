@@ -56,7 +56,7 @@ pub enum ParseFragment {
     RuleStart {
         parent : Option<usize>,
         name: Option<usize>,
-        ntname: String,        // nonterm name
+        ntname: usize, // nonterm name
     },
     RuleTermValue {
         prev : usize,
@@ -65,15 +65,15 @@ pub enum ParseFragment {
     },
     RuleNonTerm {
         child : usize,
-        ntname: String,
+        ntnameidx: usize,
         ev_name : Option<usize>
     },
 }
 
 pub trait StreamingHandler {
-    fn start(&mut self, ntname: &String, name: &Option<String>);
-    fn end(&mut self, ntname: &String, xname: &Option<String>);
-    fn term(&mut self, tokidx: usize, name: &Option<String>);
+    fn start(&mut self, ntname: &String, name: &Option<&String>);
+    fn end(&mut self, ntname: &String, xname: &Option<&String>);
+    fn term(&mut self, tokidx: usize, name: &Option<&String>);
 }
 
 /**
@@ -141,25 +141,29 @@ impl ParsedTrees {
         match &self.fragments[fragidx] {
             // RuleStart
             // current node is the child of parent
-            &ParseFragment::RuleStart { ref ntname, ref name, .. } => {
-                let name_string = &name.map(|x| self.strings[x].clone());
-                handler.start(&ntname, name_string);
+            &ParseFragment::RuleStart { ntname, name, .. } => {
+                let name_string = name.map(|x| &self.strings[x]);
+                let ntname_string = &self.strings[ntname];
+                handler.start(ntname_string, &name_string);
                 if index < indexes.len() - 1 {
                     self.stream(indexes, index + 1, handler);
                 }
                 if index == 0 {
-                    handler.end(&ntname, name_string);
+                    handler.end(ntname_string, &name_string);
                 }
             },
-            &ParseFragment::RuleTermValue { tokidx, ref name, .. } => {
-                handler.term(tokidx, &name.map(|x| self.strings[x].clone()));
+            &ParseFragment::RuleTermValue { tokidx, name, .. } => {
+                let name_string = name.map(|x| &self.strings[x]);
+                handler.term(tokidx, &name_string);
                 if index < indexes.len() - 1 {
                     // output sibling which comes before this term
                     self.stream(indexes, index + 1, handler);
                 }
             },
-            &ParseFragment::RuleNonTerm { ref ev_name, ref ntname, .. } => {
-                handler.end(ntname, &ev_name.map(|x| self.strings[x].clone()));
+            &ParseFragment::RuleNonTerm { ev_name, ntnameidx, .. } => {
+                let ntname_string = &self.strings[ntnameidx];
+                let evname = ev_name.map(|x| &self.strings[x]);
+                handler.end(ntname_string, &evname);
                 if index < indexes.len() - 1 {
                     // output sibling which comes before this term
                     self.stream(indexes, index + 1, handler);
@@ -193,7 +197,7 @@ impl ParsedTrees {
         &self,
         tidx : usize,
         handler : &mut U) {
-        let mut tail = self.tails[tidx];
+        let tail = self.tails[tidx];
         let (fragidx, _) = tail;
         let mut curr = fragidx;
         let mut indexes = Vec::<usize>::new();
@@ -223,6 +227,13 @@ struct VMThread {
 pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTrees
     where F : Fn(&str, usize) -> bool {
 
+    // allocate enough space to store all possible
+    // matches within one token
+    let mut matched = Vec::<isize>::with_capacity(cg.strings.len());
+    for n in 0..cg.strings.len() {
+        matched.push(0);
+    }
+
     let mut fragments = Vec::<ParseFragment>::new();
 
     // list of finished parses (index into fragments)
@@ -230,21 +241,25 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
 
     // list of thread ids
     let mut runnable : Vec<VMThread> = Vec::new();
-    // list of threads that need to perform a MATCH operation
-    let mut matchable : Vec<VMThread> = Vec::new();
 
-    for initial_thread_addr in cg.lookup_nonterm(nt_start) {
+    // list of threads that need to perform a MATCH operation
+    // sorted by first
+    let mut matchable : Vec<(usize, VMThread)> = Vec::new();
+
+    let nt_start_idx: Option<usize> = cg.lookup_string(nt_start);
+
+    for initial_thread_addr in cg.lookup_nonterm_idx(nt_start_idx.unwrap()) {
         fragments.push({
             ParseFragment::RuleStart {
                 parent: None,
-                ntname: nt_start.to_string(),
+                ntname: nt_start_idx.unwrap(),
                 name: None,
             }
         });
         runnable.push(VMThread {
             sp: usize::MAX,
-            ip : initial_thread_addr,
-            fragidx : fragments.len() - 1,
+            ip: initial_thread_addr,
+            fragidx: fragments.len() - 1,
         });
     }
 
@@ -252,53 +267,39 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
     let mut tokidx = 0;
 
     while runnable.len() > 0  {
-
         while runnable.len() > 0 {
-
             let mut thread = runnable.pop().unwrap();
-
 //            println!("** executing {}:{:?} (th {})", threads[i].ip, cg.at(threads[i].ip), i);
             // fetch instruction at 'ip'
             match cg.at(thread.ip) {
-                Opcode::Match { validx, nameidx } => {
-                    // suspend thread at match
-                    matchable.push(thread);
-                }
-                Opcode::Fork { ntidx, nameidx } => {
-
-                    // get nonterm name
-                    let nt = &cg.strings[ntidx];
-//                    println!("{}: Opcode::Fork {}", threads[i].ip, nt);
-
-                    let mut created = 0;
-                    for initial_thread_addr in cg.lookup_nonterm(nt) {
-
-                        // ordering: [1] depends on [2]
-                        fragments.push(ParseFragment::RuleStart {
-                            parent: Some(thread.fragidx), // [2]
-                            ntname: nt.to_string(),
-                            name: nameidx,
-                        });
-
-                        let cur_fragidx = fragments.len() - 1;
-                        let vmt = VMThread {
-                            // copy stack from parent thread
-                            sp: sharedStack.push(thread.sp, thread.ip),
-                            ip : initial_thread_addr,
-                            fragidx : cur_fragidx, // [1]
-                        };
-
-                        // this new thread can run immediately
-                        runnable.push(vmt);
-                        created += 1;
+                Opcode::Match { validx, .. } => {
+                    // maintain a sorted order in matchable
+                    // on the first item of the tuple (validx)
+                    match matchable.binary_search_by_key(&validx, |&(a, ref b)| a) {
+                        Ok(pos) => matchable.insert(pos, (validx, thread)),
+                        Err(pos) => matchable.insert(pos, (validx, thread))
                     }
                 }
-                Opcode::Return { ntname, nameidx } => {
-                    // nameidx is the prod name for callback
-//                    let ret = threads[i].si.pop();
-//                    println!("{}: Opcode::Return {:?}",
-//                             threads[i].ip,
-//                             ret);
+                Opcode::Fork { ntidx, nameidx } => {
+                    // ordering: [1] depends on [2]
+                    fragments.push(ParseFragment::RuleStart {
+                        parent: Some(thread.fragidx), // [2]
+                        ntname: ntidx,
+                        name: nameidx,
+                    });
+
+                    for initial_thread_addr in cg.lookup_nonterm_idx(ntidx) {
+                        let vmt = VMThread {
+                            // continue stack from parent thread
+                            sp: sharedStack.push(thread.sp, thread.ip),
+                            ip: initial_thread_addr,
+                            fragidx: fragments.len() - 1, // [1]
+                        };
+                        // this new thread can run immediately
+                        runnable.push(vmt);
+                    }
+                }
+                Opcode::Return { ntnameidx, nameidx } => {
                     // check if the thread has a return value
                     // or whether it is a top-level thread
                     if thread.sp != usize::MAX {
@@ -306,16 +307,14 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                         let prev_fragidx = thread.fragidx;
                         fragments.push(ParseFragment::RuleNonTerm {
                             child: prev_fragidx,
-                            ntname: ntname.clone(),
+                            ntnameidx: ntnameidx,
                             // remap int option to string option
                             ev_name: nameidx,
                         });
 
-                        let cur_fragidx = fragments.len() - 1;
-
                         thread.sp = sharedStack.pop(thread.sp);
                         thread.ip = ret + 1;
-                        thread.fragidx = cur_fragidx;
+                        thread.fragidx = fragments.len() - 1;
                         runnable.push(thread);
                     } else {
                         // add the current fragidx to the list of finished parses
@@ -327,12 +326,26 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
         }
         assert_eq!(runnable.len(), 0);
 
+        matchable.reverse();
+        for n in 0..cg.strings.len() {
+            matched[n] = 0;
+        }
+        let mut prev_validx = usize::MAX;
         while matchable.len() > 0 {
-            let mut thread = matchable.pop().unwrap();
+            let tuple = matchable.pop().unwrap();
+            // check that the matchable array is sorted
+            assert!(prev_validx == usize::MAX ||
+                    prev_validx <= tuple.0);
+            prev_validx = tuple.0;
+            let mut thread = tuple.1;
 
             match cg.at(thread.ip) {
                 Opcode::Match { validx, nameidx } => {
                     if match_fn(&cg.strings[validx], tokidx) {
+                        if matched[validx] != 0 {
+                            println!("doubel checked!!!!!!");
+                        }
+                        matched[validx] = 1;
                         // allow this thread to proceed
                         thread.ip += 1;
                         let prev_fragidx = thread.fragidx;
@@ -344,8 +357,9 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                             name: nameidx,
                         });
 
-                        let current_fragidx = fragments.len() - 1;
-                        thread.fragidx = current_fragidx;
+                        thread.fragidx = fragments.len() - 1;
+                    } else {
+                        matched[validx] = -1;
                     }
                 },
                 _ => {
