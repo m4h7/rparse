@@ -1,4 +1,5 @@
 use std::usize;
+use std::env;
 use compiler::{CompiledGrammar, Opcode};
 
 struct SharedStackItem<U> {
@@ -227,6 +228,19 @@ struct VMThread {
 pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTrees
     where F : Fn(&str, usize) -> bool {
 
+    let debug_level = match env::var("PARSERDEBUG") {
+        Ok(s) => {
+            match s.parse::<usize>() {
+                Ok(n) => n,
+                Err(why) => {
+                    println!("Unable to parse $PARSEDEBUG as an uint {:?}", why);
+                    0
+                }
+            }
+        },
+        Err(_) => 0,
+    };
+
     // allocate enough space to store all possible
     // matches within one token
     let mut matched = Vec::<isize>::with_capacity(cg.strings.len());
@@ -267,9 +281,17 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
     let mut tokidx = 0;
 
     while runnable.len() > 0  {
+        if debug_level > 2 {
+            println!("at tokidx {} running {} threads",
+                     tokidx, runnable.len());
+        }
         while runnable.len() > 0 {
             let mut thread = runnable.pop().unwrap();
-//            println!("** executing {}:{:?} (th {})", threads[i].ip, cg.at(threads[i].ip), i);
+            if debug_level > 3 {
+                println!("** executing {}:{:?}",
+                         thread.ip,
+                         cg.at(thread.ip));
+            }
             // fetch instruction at 'ip'
             match cg.at(thread.ip) {
                 Opcode::Match { validx, .. } => {
@@ -330,6 +352,10 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
         for n in 0..cg.strings.len() {
             matched[n] = 0;
         }
+        if debug_level > 1 && matchable.len() > 0 {
+            println!("matching {} threads at token index {}",
+                     matchable.len(), tokidx);
+        }
         let mut prev_validx = usize::MAX;
         while matchable.len() > 0 {
             let tuple = matchable.pop().unwrap();
@@ -341,8 +367,8 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
 
             match cg.at(thread.ip) {
                 Opcode::Match { validx, nameidx } => {
-                    let mut match_result = false;
-                    // reuse previous match result
+                    let match_result;
+                    // reuse previous match result if there is one
                     if matched[validx] == 1 {
                         match_result = true;
                     } else if matched[validx] == -1 {
@@ -355,6 +381,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                             matched[validx] = -1;
                         }
                     }
+
                     if match_result {
                         // allow this thread to proceed
                         thread.ip += 1;
