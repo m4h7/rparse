@@ -150,7 +150,7 @@ mod tests {
         let gs = r#"
           A : 'a';
           E : ;
-          X : A E A A A;
+          Z : A E A A A;
         "#;
         let c = compile_grammar(gs);
         // c.display();
@@ -161,7 +161,7 @@ mod tests {
         tokens.push("a".to_string());
         tokens.push("a".to_string());
 
-        let pt = run("X", &c, |s, i| { i < tokens.len() && tokens[i] == s });
+        let pt = run("Z", &c, |s, i| { i < tokens.len() && tokens[i] == s });
 
         assert_eq!(pt.count(), 1);
     }
@@ -190,8 +190,8 @@ mod tests {
     #[test]
     fn rec_grammar_test() {
         let gs = r#"
-          X
-            : 'a' X
+          R
+            : 'a' R
             | 'b'
             ;
         "#;
@@ -205,7 +205,7 @@ mod tests {
         tokens.push("a".to_string());
         tokens.push("b".to_string());
 
-        let pt = run("X", &c, |s, i| { tokens[i] == s });
+        let pt = run("R", &c, |s, i| { tokens[i] == s });
 
         assert_eq!(pt.count(), 1);
     }
@@ -214,8 +214,7 @@ mod tests {
     fn rec2_grammar_test() {
         let gs = r#"
           A : 'w' ;
-          X
-            : 'a' X
+          Q : 'a' Q
             |
             ;
         "#;
@@ -236,7 +235,7 @@ mod tests {
         tokens.push("a".to_string());
         tokens.push("w".to_string());
 
-        let pt = run("X", &c, |s, i| { i < tokens.len() && tokens[i] == s });
+        let pt = run("Q", &c, |s, i| { i < tokens.len() && tokens[i] == s });
 
         assert_eq!(pt.count_at_n(tokens.len() - 1), 1);
     }

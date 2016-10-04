@@ -41,6 +41,10 @@ impl CompiledGrammar {
         self.opcodes[ip].clone()
     }
 
+    pub fn debug_lookup(&self, idx: usize) -> String {
+       self.strings[idx].clone()
+    }
+
     // return a list of addresses associated with a nonterm name
     // TODO: remove the .clone()
     pub fn lookup_nonterm_idx(&self, ntidx: usize) -> Vec<usize> {

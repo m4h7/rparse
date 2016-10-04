@@ -288,11 +288,33 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
         while runnable.len() > 0 {
             let mut thread = runnable.pop().unwrap();
             if debug_level > 3 {
-                println!("** executing @ {} {:?} runnable {} matchable {}",
-                         thread.ip,
-                         cg.at(thread.ip),
-                         runnable.len(),
-                         matchable.len());
+                match cg.at(thread.ip) {
+                    Opcode::Match { validx, .. } => {
+                        println!("** {} Match '{}' (runnable {} matchable {})",
+                                 thread.ip,
+                                 cg.debug_lookup(validx),
+                                 runnable.len(),
+                                 matchable.len());
+                    }
+                    Opcode::Fork { ntidx, nameidx } => {
+                        println!("** {} Fork '{}/{}' (runnable {} matchable {})",
+                                 thread.ip,
+                                 cg.debug_lookup(ntidx),
+                                 nameidx.map_or("".to_string(),
+                                                |x| cg.debug_lookup(x)),
+                                 runnable.len(),
+                                 matchable.len());
+                    }
+                    Opcode::Return { ntnameidx, nameidx } => {
+                        println!("** {} Return '{}/{}' (runnable {} matchable {})",
+                                 thread.ip,
+                                 cg.debug_lookup(ntnameidx),
+                                 nameidx.map_or("".to_string(),
+                                                |x| cg.debug_lookup(x)),
+                                 runnable.len(),
+                                 matchable.len());
+                    }
+                }
             }
             // fetch instruction at 'ip'
             match cg.at(thread.ip) {
@@ -314,7 +336,10 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
 
                     for initial_thread_addr in cg.lookup_nonterm_idx(ntidx) {
                         if debug_level > 4 {
-                            println!("forking @ {}", initial_thread_addr);
+                            println!("forking '{}' -> addr {} fragidx {}",
+                                     cg.debug_lookup(ntidx),
+                                     initial_thread_addr,
+                                     fragments.len() - 1);
                         }
                         let vmt = VMThread {
                             // continue stack from parent thread
