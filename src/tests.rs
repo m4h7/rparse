@@ -135,7 +135,7 @@ mod tests {
         // "Y" - START grammar rule
         // &c - grammar to use
         // 3rd arg: match function
-        let parsed_trees = run("START", &c, |s, i| { tokens[i] == s });
+        let parsed_trees = run("START", &c, |s, i| { tokens[i] == s }, tokens.len());
 
         assert_eq!(parsed_trees.count(), 1);
 
@@ -161,7 +161,7 @@ mod tests {
         tokens.push("a".to_string());
         tokens.push("a".to_string());
 
-        let pt = run("Z", &c, |s, i| { i < tokens.len() && tokens[i] == s });
+        let pt = run("Z", &c, |s, i| { i < tokens.len() && tokens[i] == s }, 0);
 
         assert_eq!(pt.count(), 1);
     }
@@ -182,7 +182,7 @@ mod tests {
         tokens.push("a".to_string());
         tokens.push("a".to_string());
 
-        let pt = run("X", &c, |s, i| { i < tokens.len() && tokens[i] == s });
+        let pt = run("X", &c, |s, i| { i < tokens.len() && tokens[i] == s }, 0);
 
         assert_eq!(pt.count(), 1);
     }
@@ -205,7 +205,7 @@ mod tests {
         tokens.push("a".to_string());
         tokens.push("b".to_string());
 
-        let pt = run("R", &c, |s, i| { tokens[i] == s });
+        let pt = run("R", &c, |s, i| { tokens[i] == s }, 0);
 
         assert_eq!(pt.count(), 1);
     }
@@ -235,7 +235,7 @@ mod tests {
         tokens.push("a".to_string());
         tokens.push("w".to_string());
 
-        let pt = run("Q", &c, |s, i| { i < tokens.len() && tokens[i] == s });
+        let pt = run("Q", &c, |s, i| { i < tokens.len() && tokens[i] == s }, 0);
 
         assert_eq!(pt.count_at_n(tokens.len() - 1), 1);
     }
@@ -290,7 +290,7 @@ mod tests {
         let html_tokens = tokenize_html("<html lang=\"en\"><head><TITLE>hello</TITLE></head><body></body></html>");
         let gs = "S : X; X : '<html>' '<head>' '<title>' 'hello' '</title>' '</head>' '<body>' '</body>' '</html>';";
         let cg = compile_grammar(gs);
-        let pt = run("S", &cg, |s, i| { html_tokens[i].value == s });
+        let pt = run("S", &cg, |s, i| { html_tokens[i].value == s }, 0);
         assert_eq!(pt.count(), 1);
     }
 

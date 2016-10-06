@@ -225,7 +225,7 @@ struct VMThread {
 // nt_start: nonterminal
 // cg: grammar to use
 //
-pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTrees
+pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: usize) -> ParsedTrees
     where F : Fn(&str, usize) -> bool {
 
     let debug_level = match env::var("PARSERDEBUG") {
@@ -355,23 +355,23 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F) -> ParsedTree
                     // check if the thread has a return value
                     // or whether it is a top-level thread
                     if thread.sp != usize::MAX {
-                        let ret = sharedStack.top(thread.sp);
-                        let prev_fragidx = thread.fragidx;
                         fragments.push(ParseFragment::RuleNonTerm {
-                            child: prev_fragidx,
+                            child: thread.fragidx,
                             ntnameidx: ntnameidx,
-                            // remap int option to string option
                             ev_name: nameidx,
                         });
 
+                        let ret = sharedStack.top(thread.sp);
                         thread.sp = sharedStack.pop(thread.sp);
                         thread.ip = ret + 1;
                         thread.fragidx = fragments.len() - 1;
                         runnable.push(thread);
                     } else {
-                        // add the current fragidx to the list of finished parses
-                        let tail = (thread.fragidx, tokidx);
-                        tails.push(tail);
+                        if tokidx >= min_match {
+                            // add the current fragidx to the list of finished parses
+                            let tail = (thread.fragidx, tokidx);
+                            tails.push(tail);
+                        }
                     }
                 }
             }
