@@ -484,6 +484,12 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
         for thread in &runnable {
             let mut fragidx = thread.fragidx;
             while fragidx != usize::MAX {
+                // if we already visited this fragidx then
+                // we also visited all his 'prev' fragments,
+                // so end the loop early
+                if reachableFragidx.contains(&fragidx) {
+                    break;
+                }
                 reachableFragidx.insert(fragidx);
                 fragidx = prevFragment(&fragments, fragidx, usize::MAX);
             }
