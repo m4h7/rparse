@@ -1,7 +1,6 @@
 use std::usize;
 use std::env;
 use compiler::{CompiledGrammar, Opcode};
-use std::collections::HashSet;
 
 struct SharedStackItem<U> {
     u: U,
@@ -72,6 +71,7 @@ pub enum ParseFragment {
     },
 }
 
+#[inline]
 fn prevFragment(fragments: &Vec<ParseFragment>, fragidx: usize, default: usize) -> usize {
     match &fragments[fragidx] {
         &ParseFragment::RuleStart { parent, .. } => {
@@ -257,6 +257,8 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
     // list of thread ids
     let mut runnable : Vec<VMThread> = Vec::new();
 
+    let mut reachable: Vec<usize> = Vec::new();
+
     // list of free fragment ids
     let mut freelist: Vec<usize> = Vec::new();
 
@@ -274,6 +276,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                 name: None,
             }
         });
+        reachable.push(0);
         runnable.push(VMThread {
             sp: usize::MAX,
             ip: initial_thread_addr,
@@ -347,6 +350,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                         },
                         None => {
                             fragments.push(frag);
+                            reachable.push(0);
                             fragment_idx = fragments.len() - 1;
                         }
                     }
@@ -387,6 +391,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                             },
                             None => {
                                 fragments.push(frag);
+                                reachable.push(0);
                                 fragment_idx = fragments.len() - 1;
                             }
                         }
@@ -463,6 +468,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                             },
                             None => {
                                 fragments.push(frag);
+                                reachable.push(0);
                                 fragment_idx = fragments.len() - 1;
                             }
                         }
@@ -481,17 +487,20 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
 
         if freelist.len() < 10 {
             // garbage collect fragments
-            let mut reachableFragidx = HashSet::<usize>::new();
+            assert!(reachable.len() == fragments.len());
+            for n in 0..reachable.len() {
+                reachable[n] = 0;
+            }
             for thread in &runnable {
                 let mut fragidx = thread.fragidx;
                 while fragidx != usize::MAX {
                     // if we already visited this fragidx then
                     // we also visited all his 'prev' fragments,
                     // so end the loop early
-                    if reachableFragidx.contains(&fragidx) {
+                    if reachable[fragidx] > 0 {
                         break;
                     }
-                    reachableFragidx.insert(fragidx);
+                    reachable[fragidx] += 1;
                     fragidx = prevFragment(&fragments, fragidx, usize::MAX);
                 }
             }
@@ -502,22 +511,22 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                     // if we already visited this fragidx then
                     // we also visited all his 'prev' fragments,
                     // so end the loop early
-                    if reachableFragidx.contains(&fragidx) {
+                    if reachable[fragidx] > 0 {
                         break;
                     }
-                    reachableFragidx.insert(fragidx);
+                    reachable[fragidx] += 1;
                     fragidx = prevFragment(&fragments, fragidx, usize::MAX);
                 }
             }
             freelist.clear();
-            for n in 0..fragments.len() {
-                if !reachableFragidx.contains(&n) {
+            for n in 0..reachable.len() {
+                if reachable[n] == 0 {
                     freelist.push(n);
                 }
             }
             if debug_level > 4 {
-                println!("GC reachable {} total {} runnable {} freelist {}",
-                         reachableFragidx.len(), fragments.len(), runnable.len(), freelist.len());
+                println!("GC total {} runnable {} freelist {}",
+                         fragments.len(), runnable.len(), freelist.len());
             }
         }
     }
