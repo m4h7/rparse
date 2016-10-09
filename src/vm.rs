@@ -52,7 +52,7 @@ impl<U> SharedStack<U> {
 //  Q. ...
 
 #[derive(Debug)]
-pub enum ParseFragment {
+pub enum FragmentType {
     // RuleStart without parent is the top node
     RuleStart {
         parent : Option<usize>,
@@ -67,21 +67,27 @@ pub enum ParseFragment {
     RuleNonTerm {
         child : usize,
         ntnameidx: usize,
-        ev_name : Option<usize>
+        ev_name : Option<usize>,
     },
+}
+
+#[derive(Debug)]
+pub struct ParseFragment {
+  refcount: usize,
+  value: FragmentType,
 }
 
 #[inline]
 fn prevFragment(fragments: &Vec<ParseFragment>, fragidx: usize, default: usize) -> usize {
-    match &fragments[fragidx] {
-        &ParseFragment::RuleStart { parent, .. } => {
+    match &fragments[fragidx].value {
+        &FragmentType::RuleStart { parent, .. } => {
             match parent {
                 Some(parentidx) => parentidx,
                 None => default,
             }
         }
-        &ParseFragment::RuleTermValue { prev, .. } => prev,
-        &ParseFragment::RuleNonTerm { child, .. } => child,
+        &FragmentType::RuleTermValue { prev, .. } => prev,
+        &FragmentType::RuleNonTerm { child, .. } => child,
     }
 }
 
@@ -153,10 +159,10 @@ impl ParsedTrees {
 
         let fragidx = indexes[index];
 //        println!("stream@fragidx = {} -> {:?}", fragidx, self.fragments[fragidx]);
-        match &self.fragments[fragidx] {
+        match &self.fragments[fragidx].value {
             // RuleStart
             // current node is the child of parent
-            &ParseFragment::RuleStart { ntname, name, .. } => {
+            &FragmentType::RuleStart { ntname, name, .. } => {
                 let name_string = name.map(|x| &self.strings[x]);
                 let ntname_string = &self.strings[ntname];
                 handler.start(ntname_string, &name_string);
@@ -167,7 +173,7 @@ impl ParsedTrees {
                     handler.end(ntname_string, &name_string);
                 }
             },
-            &ParseFragment::RuleTermValue { tokidx, name, .. } => {
+            &FragmentType::RuleTermValue { tokidx, name, .. } => {
                 let name_string = name.map(|x| &self.strings[x]);
                 handler.term(tokidx, &name_string);
                 if index < indexes.len() - 1 {
@@ -175,7 +181,7 @@ impl ParsedTrees {
                     self.stream(indexes, index + 1, handler);
                 }
             },
-            &ParseFragment::RuleNonTerm { ev_name, ntnameidx, .. } => {
+            &FragmentType::RuleNonTerm { ev_name, ntnameidx, .. } => {
                 let ntname_string = &self.strings[ntnameidx];
                 let evname = ev_name.map(|x| &self.strings[x]);
                 handler.end(ntname_string, &evname);
@@ -257,8 +263,6 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
     // list of thread ids
     let mut runnable : Vec<VMThread> = Vec::new();
 
-    let mut reachable: Vec<usize> = Vec::new();
-
     // list of free fragment ids
     let mut freelist: Vec<usize> = Vec::new();
 
@@ -269,14 +273,15 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
     let nt_start_idx: Option<usize> = cg.lookup_string(nt_start);
 
     for initial_thread_addr in cg.lookup_nonterm_idx(nt_start_idx.unwrap()) {
-        fragments.push({
-            ParseFragment::RuleStart {
+        let frag = ParseFragment {
+            refcount: 1,
+            value: FragmentType::RuleStart {
                 parent: None,
                 ntname: nt_start_idx.unwrap(),
                 name: None,
             }
-        });
-        reachable.push(0);
+        };
+        fragments.push(frag);
         runnable.push(VMThread {
             sp: usize::MAX,
             ip: initial_thread_addr,
@@ -335,14 +340,17 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                 }
                 Opcode::Fork { ntidx, nameidx } => {
                     // ordering: [1] depends on [2]
-                    let frag = ParseFragment::RuleStart {
-                        parent: Some(thread.fragidx), // [2]
-                        ntname: ntidx,
-                        name: nameidx,
+                    let frag = ParseFragment {
+                        refcount: 0,
+                        value: FragmentType::RuleStart {
+                            parent: Some(thread.fragidx), // [2]
+                            ntname: ntidx,
+                            name: nameidx,
+                        },
                     };
 
                     let fragment_idx;
-                    let mut free_frag_idx = freelist.pop();
+                    let free_frag_idx = freelist.pop();
                     match free_frag_idx {
                         Some(idx) => {
                             fragments[idx] = frag;
@@ -350,7 +358,6 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                         },
                         None => {
                             fragments.push(frag);
-                            reachable.push(0);
                             fragment_idx = fragments.len() - 1;
                         }
                     }
@@ -360,8 +367,9 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                             println!("forking '{}' -> addr {} fragidx {}",
                                      cg.debug_lookup(ntidx),
                                      initial_thread_addr,
-                                     fragments.len() - 1);
+                                     fragment_idx);
                         }
+                        fragments[fragment_idx].refcount += 1;
                         let vmt = VMThread {
                             // continue stack from parent thread
                             sp: sharedStack.push(thread.sp, thread.ip),
@@ -376,14 +384,17 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                     // check if the thread has a return value
                     // or whether it is a top-level thread
                     if thread.sp != usize::MAX {
-                        let frag = ParseFragment::RuleNonTerm {
-                            child: thread.fragidx,
-                            ntnameidx: ntnameidx,
-                            ev_name: nameidx,
+                        let frag = ParseFragment {
+                            refcount: 1,
+                            value: FragmentType::RuleNonTerm {
+                                child: thread.fragidx,
+                                ntnameidx: ntnameidx,
+                                ev_name: nameidx,
+                            },
                         };
 
                         let fragment_idx;
-                        let mut free_frag_idx = freelist.pop();
+                        let free_frag_idx = freelist.pop();
                         match free_frag_idx {
                             Some(idx) => {
                                 fragments[idx] = frag;
@@ -391,7 +402,6 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                             },
                             None => {
                                 fragments.push(frag);
-                                reachable.push(0);
                                 fragment_idx = fragments.len() - 1;
                             }
                         }
@@ -453,10 +463,13 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                         let prev_fragidx = thread.fragidx;
                         runnable.push(thread);
 
-                        let frag = ParseFragment::RuleTermValue {
-                            prev: prev_fragidx,
-                            tokidx: tokidx,
-                            name: nameidx,
+                        let frag = ParseFragment {
+                            refcount: 1,
+                            value: FragmentType::RuleTermValue {
+                                prev: prev_fragidx,
+                                tokidx: tokidx,
+                                name: nameidx,
+                            },
                         };
 
                         let fragment_idx;
@@ -468,12 +481,31 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                             },
                             None => {
                                 fragments.push(frag);
-                                reachable.push(0);
                                 fragment_idx = fragments.len() - 1;
                             }
                         }
 
                         thread.fragidx = fragment_idx;
+                    } else {
+                        // thread terminated, release all his fragments
+                        let mut fragidx = thread.fragidx;
+                        while fragidx != usize::MAX {
+                            assert!(fragments[fragidx].refcount > 0);
+                            fragments[fragidx].refcount -= 1;
+                            if fragments[fragidx].refcount == 0 {
+                                // maintain a sorted freelist
+                                match freelist.binary_search(&fragidx) {
+                                    Ok(pos) => freelist.insert(pos, fragidx),
+                                    Err(pos) => freelist.insert(pos, fragidx),
+                                }
+                                // continue to the prev element
+                                fragidx = prevFragment(&fragments, fragidx, usize::MAX);
+                            } else {
+                                // element (and all his prev elements) not garbage
+                                // collectable due to rc > 0
+                                break;
+                            }
+                        }
                     }
                 },
                 _ => {
@@ -485,49 +517,9 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
 
         tokidx += 1;
 
-        if freelist.len() < 10 {
-            // garbage collect fragments
-            assert!(reachable.len() == fragments.len());
-            for n in 0..reachable.len() {
-                reachable[n] = 0;
-            }
-            for thread in &runnable {
-                let mut fragidx = thread.fragidx;
-                while fragidx != usize::MAX {
-                    // if we already visited this fragidx then
-                    // we also visited all his 'prev' fragments,
-                    // so end the loop early
-                    if reachable[fragidx] > 0 {
-                        break;
-                    }
-                    reachable[fragidx] += 1;
-                    fragidx = prevFragment(&fragments, fragidx, usize::MAX);
-                }
-            }
-            for tail in &tails {
-                let &(tfragidx, _) = tail;
-                let mut fragidx = tfragidx;
-                while fragidx != usize::MAX {
-                    // if we already visited this fragidx then
-                    // we also visited all his 'prev' fragments,
-                    // so end the loop early
-                    if reachable[fragidx] > 0 {
-                        break;
-                    }
-                    reachable[fragidx] += 1;
-                    fragidx = prevFragment(&fragments, fragidx, usize::MAX);
-                }
-            }
-            freelist.clear();
-            for n in 0..reachable.len() {
-                if reachable[n] == 0 {
-                    freelist.push(n);
-                }
-            }
-            if debug_level > 4 {
-                println!("GC total {} runnable {} freelist {}",
-                         fragments.len(), runnable.len(), freelist.len());
-            }
+        if debug_level > 4 {
+            println!("GC total {} runnable {} freelist {}",
+                     fragments.len(), runnable.len(), freelist.len());
         }
     }
 
