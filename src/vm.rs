@@ -479,38 +479,46 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
 
         tokidx += 1;
 
-        // garbage collect fragments
-        let mut reachableFragidx = HashSet::<usize>::new();
-        for thread in &runnable {
-            let mut fragidx = thread.fragidx;
-            while fragidx != usize::MAX {
-                // if we already visited this fragidx then
-                // we also visited all his 'prev' fragments,
-                // so end the loop early
-                if reachableFragidx.contains(&fragidx) {
-                    break;
+        if freelist.len() < 10 {
+            // garbage collect fragments
+            let mut reachableFragidx = HashSet::<usize>::new();
+            for thread in &runnable {
+                let mut fragidx = thread.fragidx;
+                while fragidx != usize::MAX {
+                    // if we already visited this fragidx then
+                    // we also visited all his 'prev' fragments,
+                    // so end the loop early
+                    if reachableFragidx.contains(&fragidx) {
+                        break;
+                    }
+                    reachableFragidx.insert(fragidx);
+                    fragidx = prevFragment(&fragments, fragidx, usize::MAX);
                 }
-                reachableFragidx.insert(fragidx);
-                fragidx = prevFragment(&fragments, fragidx, usize::MAX);
             }
-        }
-        for tail in &tails {
-            let &(tfragidx, _) = tail;
-            let mut fragidx = tfragidx;
-            while fragidx != usize::MAX {
-                reachableFragidx.insert(fragidx);
-                fragidx = prevFragment(&fragments, fragidx, usize::MAX);
+            for tail in &tails {
+                let &(tfragidx, _) = tail;
+                let mut fragidx = tfragidx;
+                while fragidx != usize::MAX {
+                    // if we already visited this fragidx then
+                    // we also visited all his 'prev' fragments,
+                    // so end the loop early
+                    if reachableFragidx.contains(&fragidx) {
+                        break;
+                    }
+                    reachableFragidx.insert(fragidx);
+                    fragidx = prevFragment(&fragments, fragidx, usize::MAX);
+                }
             }
-        }
-        freelist.clear();
-        for n in 0..fragments.len() {
-            if !reachableFragidx.contains(&n) {
-                freelist.push(n);
+            freelist.clear();
+            for n in 0..fragments.len() {
+                if !reachableFragidx.contains(&n) {
+                    freelist.push(n);
+                }
             }
-        }
-        if debug_level > 4 {
-            println!("reachable {} total {} runnable {} freelist {}",
-                     reachableFragidx.len(), fragments.len(), runnable.len(), freelist.len());
+            if debug_level > 4 {
+                println!("GC reachable {} total {} runnable {} freelist {}",
+                         reachableFragidx.len(), fragments.len(), runnable.len(), freelist.len());
+            }
         }
     }
 
