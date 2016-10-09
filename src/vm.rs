@@ -1,6 +1,7 @@
 use std::usize;
 use std::env;
 use compiler::{CompiledGrammar, Opcode};
+use std::collections::HashSet;
 
 struct SharedStackItem<U> {
     u: U,
@@ -69,6 +70,19 @@ pub enum ParseFragment {
         ntnameidx: usize,
         ev_name : Option<usize>
     },
+}
+
+fn prevFragment(fragments: &Vec<ParseFragment>, fragidx: usize, default: usize) -> usize {
+    match &fragments[fragidx] {
+        &ParseFragment::RuleStart { parent, .. } => {
+            match parent {
+                Some(parentidx) => parentidx,
+                None => default,
+            }
+        }
+        &ParseFragment::RuleTermValue { prev, .. } => prev,
+        &ParseFragment::RuleNonTerm { child, .. } => child,
+    }
 }
 
 pub trait StreamingHandler {
@@ -174,19 +188,6 @@ impl ParsedTrees {
         }
     }
 
-    fn prev(&self, fragidx: usize, default: usize) -> usize {
-        match &self.fragments[fragidx] {
-            &ParseFragment::RuleStart { parent, .. } => {
-                match parent {
-                  Some(parentidx) => parentidx,
-                  None => default,
-                }
-             }
-             &ParseFragment::RuleTermValue { prev, .. } => prev,
-             &ParseFragment::RuleNonTerm { child, .. } => child,
-        }
-    }
-
     /**
      * Execute a callback on a parse tree
      *
@@ -204,7 +205,7 @@ impl ParsedTrees {
         let mut indexes = Vec::<usize>::new();
         while curr != usize::MAX {
             indexes.push(curr);
-            curr = self.prev(curr, usize::MAX);
+            curr = prevFragment(&self.fragments, curr, usize::MAX);
         }
         indexes.reverse();
         self.stream(&indexes, 0, handler);
@@ -255,6 +256,9 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
 
     // list of thread ids
     let mut runnable : Vec<VMThread> = Vec::new();
+
+    // list of free fragment ids
+    let mut freelist: Vec<usize> = Vec::new();
 
     // list of threads that need to perform a MATCH operation
     // sorted by first
@@ -328,11 +332,24 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                 }
                 Opcode::Fork { ntidx, nameidx } => {
                     // ordering: [1] depends on [2]
-                    fragments.push(ParseFragment::RuleStart {
+                    let frag = ParseFragment::RuleStart {
                         parent: Some(thread.fragidx), // [2]
                         ntname: ntidx,
                         name: nameidx,
-                    });
+                    };
+
+                    let fragment_idx;
+                    let mut free_frag_idx = freelist.pop();
+                    match free_frag_idx {
+                        Some(idx) => {
+                            fragments[idx] = frag;
+                            fragment_idx = idx;
+                        },
+                        None => {
+                            fragments.push(frag);
+                            fragment_idx = fragments.len() - 1;
+                        }
+                    }
 
                     for initial_thread_addr in cg.lookup_nonterm_idx(ntidx) {
                         if debug_level > 4 {
@@ -345,7 +362,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                             // continue stack from parent thread
                             sp: sharedStack.push(thread.sp, thread.ip),
                             ip: initial_thread_addr,
-                            fragidx: fragments.len() - 1, // [1]
+                            fragidx: fragment_idx, // [1]
                         };
                         // this new thread can run immediately
                         runnable.push(vmt);
@@ -355,16 +372,29 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                     // check if the thread has a return value
                     // or whether it is a top-level thread
                     if thread.sp != usize::MAX {
-                        fragments.push(ParseFragment::RuleNonTerm {
+                        let frag = ParseFragment::RuleNonTerm {
                             child: thread.fragidx,
                             ntnameidx: ntnameidx,
                             ev_name: nameidx,
-                        });
+                        };
+
+                        let fragment_idx;
+                        let mut free_frag_idx = freelist.pop();
+                        match free_frag_idx {
+                            Some(idx) => {
+                                fragments[idx] = frag;
+                                fragment_idx = idx;
+                            },
+                            None => {
+                                fragments.push(frag);
+                                fragment_idx = fragments.len() - 1;
+                            }
+                        }
 
                         let ret = sharedStack.top(thread.sp);
                         thread.sp = sharedStack.pop(thread.sp);
                         thread.ip = ret + 1;
-                        thread.fragidx = fragments.len() - 1;
+                        thread.fragidx = fragment_idx;
                         runnable.push(thread);
                     } else {
                         if tokidx >= min_match {
@@ -418,13 +448,26 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                         let prev_fragidx = thread.fragidx;
                         runnable.push(thread);
 
-                        fragments.push(ParseFragment::RuleTermValue {
+                        let frag = ParseFragment::RuleTermValue {
                             prev: prev_fragidx,
                             tokidx: tokidx,
                             name: nameidx,
-                        });
+                        };
 
-                        thread.fragidx = fragments.len() - 1;
+                        let fragment_idx;
+                        let free_frag_idx = freelist.pop();
+                        match free_frag_idx {
+                            Some(idx) => {
+                                fragments[idx] = frag;
+                                fragment_idx = idx;
+                            },
+                            None => {
+                                fragments.push(frag);
+                                fragment_idx = fragments.len() - 1;
+                            }
+                        }
+
+                        thread.fragidx = fragment_idx;
                     }
                 },
                 _ => {
@@ -435,6 +478,34 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
         assert_eq!(matchable.len(), 0);
 
         tokidx += 1;
+
+        // garbage collect fragments
+        let mut reachableFragidx = HashSet::<usize>::new();
+        for thread in &runnable {
+            let mut fragidx = thread.fragidx;
+            while fragidx != usize::MAX {
+                reachableFragidx.insert(fragidx);
+                fragidx = prevFragment(&fragments, fragidx, usize::MAX);
+            }
+        }
+        for tail in &tails {
+            let &(tfragidx, _) = tail;
+            let mut fragidx = tfragidx;
+            while fragidx != usize::MAX {
+                reachableFragidx.insert(fragidx);
+                fragidx = prevFragment(&fragments, fragidx, usize::MAX);
+            }
+        }
+        freelist.clear();
+        for n in 0..fragments.len() {
+            if !reachableFragidx.contains(&n) {
+                freelist.push(n);
+            }
+        }
+        if debug_level > 4 {
+            println!("reachable {} total {} runnable {} freelist {}",
+                     reachableFragidx.len(), fragments.len(), runnable.len(), freelist.len());
+        }
     }
 
     ParsedTrees::new(fragments, tails, cg.strings.clone())
