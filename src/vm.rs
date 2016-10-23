@@ -161,9 +161,6 @@ impl ParsedTrees {
                 let name_string = name.map(|x| &self.strings[x]);
                 let ntname_string = &self.strings[ntname];
                 handler.start(ntname_string, &name_string);
-                if index < indexes.len() - 1 {
-                    self.stream(indexes, index + 1, handler);
-                }
                 if index == 0 {
                     handler.end(ntname_string, &name_string);
                 }
@@ -171,19 +168,11 @@ impl ParsedTrees {
             &FragmentType::RuleTermValue { tokidx, name, .. } => {
                 let name_string = name.map(|x| &self.strings[x]);
                 handler.term(tokidx, &name_string);
-                if index < indexes.len() - 1 {
-                    // output sibling which comes before this term
-                    self.stream(indexes, index + 1, handler);
-                }
             },
             &FragmentType::RuleNonTerm { ev_name, ntnameidx, .. } => {
                 let ntname_string = &self.strings[ntnameidx];
                 let evname = ev_name.map(|x| &self.strings[x]);
                 handler.end(ntname_string, &evname);
-                if index < indexes.len() - 1 {
-                    // output sibling which comes before this term
-                    self.stream(indexes, index + 1, handler);
-                }
             },
         }
     }
@@ -208,7 +197,9 @@ impl ParsedTrees {
             curr = prev_fragment(&self.fragments, curr, usize::MAX);
         }
         indexes.reverse();
-        self.stream(&indexes, 0, handler);
+        for index in &indexes {
+            self.stream(&indexes, *index, handler);
+        }
     }
 }
 

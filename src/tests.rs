@@ -12,6 +12,7 @@ mod tests {
     struct ParsedData {
         counter: usize,
         term_counter: usize,
+        nt_stack: Vec<String>,
     }
 
     impl ParsedData {
@@ -19,6 +20,7 @@ mod tests {
             ParsedData {
                 counter : 0,
                 term_counter: 0,
+                nt_stack: Vec::new(),
             }
         }
         fn inc(&mut self) {
@@ -29,6 +31,12 @@ mod tests {
         }
         fn inc_term(&mut self) {
             self.term_counter += 1;
+        }
+        fn push(&mut self, name: &String) {
+            self.nt_stack.push(name.clone());
+        }
+        fn pop(&mut self) -> Option<String> {
+            self.nt_stack.pop()
         }
         fn count(&self) -> usize {
 //            println!("counter ----> {}", self.counter);
@@ -42,9 +50,18 @@ mod tests {
     impl StreamingHandler for ParsedData {
         fn start(&mut self, ntname: &String, name: &Option<&String>) {
             self.inc();
+            self.push(ntname);
 //            println!("--- start {} {:?} [{}]", ntname, name, self.count());
         }
         fn end(&mut self, ntname: &String, xname: &Option<&String>) {
+            match self.pop() {
+                Some(ref s) => {
+                    assert_eq!(s, ntname);
+                },
+                None => {
+                    assert!(false);
+                }
+            };
             self.dec();
 //            println!("--- end {} {:?} [{}]", ntname, xname, self.count());
         }
