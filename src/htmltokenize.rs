@@ -72,7 +72,7 @@ impl HTMLToken {
                     }
                 } else {
                     // find the end of the value string
-                    while j < v.len() && v[j] != ' ' {
+                    while j < v.len() && v[j] != ' ' && v[j] != '>' {
                         j += 1;
                     }
                     v_end = j;

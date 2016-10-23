@@ -288,6 +288,10 @@ mod tests {
 
         let t6 = HTMLToken::parse("<br />");
         assert_eq!(t6.value, "<br/>");
+
+        let t7 = HTMLToken::parse("<td width=40>");
+        assert_eq!(t7.value, "<td>");
+        assert_eq!(t7.get_attrib_value("width"), Some("40".to_string()));
     }
 
     #[test]
