@@ -5,21 +5,21 @@ mod tests {
 
     use std::collections::VecDeque;
     use tokenize::{Tokenizer,Token};
-    use compiler::{compile_grammar, compile_grammar_file};
+    use compiler::{compile_grammar};
     use htmltokenize::{tokenize_html,HTMLToken};
     use vm::{run, StreamingHandler};
 
-    use std::fs::File;
-    use std::io::prelude::*;
-    use std::path::Path;
-
     struct ParsedData {
         counter: usize,
+        term_counter: usize,
     }
 
     impl ParsedData {
         fn new() -> ParsedData {
-            ParsedData { counter : 0 }
+            ParsedData {
+                counter : 0,
+                term_counter: 0,
+            }
         }
         fn inc(&mut self) {
             self.counter += 1;
@@ -27,23 +27,30 @@ mod tests {
         fn dec(&mut self) {
             self.counter -= 1;
         }
+        fn inc_term(&mut self) {
+            self.term_counter += 1;
+        }
         fn count(&self) -> usize {
-            println!("counter ----> {}", self.counter);
+//            println!("counter ----> {}", self.counter);
             self.counter
+        }
+        fn term_count(&self) -> usize {
+            self.term_counter
         }
     }
 
     impl StreamingHandler for ParsedData {
         fn start(&mut self, ntname: &String, name: &Option<&String>) {
             self.inc();
-            println!("--- start {} {:?} [{}]", ntname, name, self.count());
+//            println!("--- start {} {:?} [{}]", ntname, name, self.count());
         }
         fn end(&mut self, ntname: &String, xname: &Option<&String>) {
             self.dec();
-            println!("--- end {} {:?} [{}]", ntname, xname, self.count());
+//            println!("--- end {} {:?} [{}]", ntname, xname, self.count());
         }
         fn term(&mut self, tokidx: usize, name: &Option<&String>) {
-            println!("--- term = {} {:?}", tokidx, name);
+            self.inc_term();
+//            println!("--- term = {} {:?}", tokidx, name);
         }
     }
 
@@ -122,7 +129,7 @@ mod tests {
                   OTHERTYPE : 'other'(othername) 'another'(anothername) `otherrule`;
                   START : 'begin'(beginname) WORLDTYPE(wtypent) OTHERTYPE 'end'(endname) `startrule`;";
         let c = compile_grammar(gs);
-        c.display();
+//        c.display();
 
         let mut tokens = Vec::<String>::new();
         tokens.push("begin".to_string());
@@ -142,6 +149,7 @@ mod tests {
         let mut d = ParsedData::new();
         parsed_trees.execute(0, &mut d);
         assert_eq!(d.count(), 0);
+        assert_eq!(d.term_count(), 6);
 //        print_ast(&ast, &tokens, 0);
     }
 
