@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
+use std::error::Error;
 use std::path::Path;
 use std::io::prelude::*;
 use grammar::{RuleId,load_grammar_str};
@@ -173,13 +174,13 @@ pub fn compile_grammar_file<S : Into<String>>(filename: S) -> CompiledGrammar
     let name = filename.into();
     let path = Path::new(name.as_str());
     let mut file = match File::open(&path) {
-        Err(why) => panic!("couldn't open file: {}", why),
+        Err(why) => panic!("couldn't open file: {}", Error::description(&why)),
         Ok(file) => file
     };
     let mut s = String::new();
     match file.read_to_string(&mut s) {
         Err(why) => {
-            panic!("Error reading file");
+            panic!("Error reading file: {}", Error::description(&why));
         },
         Ok(_) => compile_grammar(&s)
     }
