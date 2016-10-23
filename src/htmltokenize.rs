@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 // if the char is A-Z return lowercase a-z
 fn asciilowerchar(a : char) -> char {
     if a >= 'A' && a <= 'Z' {
@@ -130,7 +128,7 @@ impl HTMLToken {
             attrib_end += 1;
         }
 
-        let mut attribs: Vec<KeyValue>;
+        let attribs: Vec<KeyValue>;
 
         if attrib_start != attrib_end {
             attribs = HTMLToken::parse_attribs(&v[attrib_start..attrib_end]);

@@ -18,10 +18,6 @@ impl<U> SharedStack<U> {
         }
     }
 
-    fn len(&self) -> usize {
-        self.stack.len()
-    }
-
     // returns new sp
     fn push(&mut self, sp: usize, u: U) -> usize {
         let si = SharedStackItem {
@@ -78,7 +74,7 @@ pub struct ParseFragment {
 }
 
 #[inline]
-fn prevFragment(fragments: &Vec<ParseFragment>, fragidx: usize, default: usize) -> usize {
+fn prev_fragment(fragments: &Vec<ParseFragment>, fragidx: usize, default: usize) -> usize {
     match &fragments[fragidx].value {
         &FragmentType::RuleStart { parent, .. } => {
             match parent {
@@ -158,7 +154,6 @@ impl ParsedTrees {
         handler: &mut U)  {
 
         let fragidx = indexes[index];
-//        println!("stream@fragidx = {} -> {:?}", fragidx, self.fragments[fragidx]);
         match &self.fragments[fragidx].value {
             // RuleStart
             // current node is the child of parent
@@ -189,7 +184,6 @@ impl ParsedTrees {
                     // output sibling which comes before this term
                     self.stream(indexes, index + 1, handler);
                 }
-//                self.stream(child, handler);
             },
         }
     }
@@ -211,7 +205,7 @@ impl ParsedTrees {
         let mut indexes = Vec::<usize>::new();
         while curr != usize::MAX {
             indexes.push(curr);
-            curr = prevFragment(&self.fragments, curr, usize::MAX);
+            curr = prev_fragment(&self.fragments, curr, usize::MAX);
         }
         indexes.reverse();
         self.stream(&indexes, 0, handler);
@@ -251,7 +245,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
     // allocate enough space to store all possible
     // matches within one token
     let mut matched = Vec::<isize>::with_capacity(cg.strings.len());
-    for n in 0..cg.strings.len() {
+    for _ in 0..cg.strings.len() {
         matched.push(0);
     }
 
@@ -289,7 +283,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
         });
     }
 
-    let mut sharedStack = SharedStack::<usize>::new();
+    let mut shared_stack = SharedStack::<usize>::new();
     let mut tokidx = 0;
 
     while runnable.len() > 0  {
@@ -333,7 +327,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                 Opcode::Match { validx, .. } => {
                     // maintain a sorted order in matchable
                     // on the first item of the tuple (validx)
-                    match matchable.binary_search_by_key(&validx, |&(a, ref b)| a) {
+                    match matchable.binary_search_by_key(&validx, |&(a, _)| a) {
                         Ok(pos) => matchable.insert(pos, (validx, thread)),
                         Err(pos) => matchable.insert(pos, (validx, thread))
                     }
@@ -372,7 +366,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                         fragments[fragment_idx].refcount += 1;
                         let vmt = VMThread {
                             // continue stack from parent thread
-                            sp: sharedStack.push(thread.sp, thread.ip),
+                            sp: shared_stack.push(thread.sp, thread.ip),
                             ip: initial_thread_addr,
                             fragidx: fragment_idx, // [1]
                         };
@@ -406,8 +400,8 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                             }
                         }
 
-                        let ret = sharedStack.top(thread.sp);
-                        thread.sp = sharedStack.pop(thread.sp);
+                        let ret = shared_stack.top(thread.sp);
+                        thread.sp = shared_stack.pop(thread.sp);
                         thread.ip = ret + 1;
                         thread.fragidx = fragment_idx;
                         runnable.push(thread);
@@ -461,7 +455,6 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                         // allow this thread to proceed
                         thread.ip += 1;
                         let prev_fragidx = thread.fragidx;
-                        runnable.push(thread);
 
                         let frag = ParseFragment {
                             refcount: 1,
@@ -486,6 +479,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                         }
 
                         thread.fragidx = fragment_idx;
+                        runnable.push(thread);
                     } else {
                         // thread terminated, release all his fragments
                         let mut fragidx = thread.fragidx;
@@ -499,7 +493,7 @@ pub fn run<F>(nt_start : &str, cg : &CompiledGrammar, match_fn: F, min_match: us
                                     Err(pos) => freelist.insert(pos, fragidx),
                                 }
                                 // continue to the prev element
-                                fragidx = prevFragment(&fragments, fragidx, usize::MAX);
+                                fragidx = prev_fragment(&fragments, fragidx, usize::MAX);
                             } else {
                                 // element (and all his prev elements) not garbage
                                 // collectable due to rc > 0
