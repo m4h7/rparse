@@ -153,27 +153,40 @@ impl ParsedTrees {
         index: usize,
         handler: &mut U)  {
 
-        let fragidx = indexes[index];
-        match &self.fragments[fragidx].value {
-            // RuleStart
-            // current node is the child of parent
+        let mut i = index;
+        let firstfragidx = indexes[i];
+        match &self.fragments[firstfragidx].value {
             &FragmentType::RuleStart { ntname, name, .. } => {
                 let name_string = name.map(|x| &self.strings[x]);
                 let ntname_string = &self.strings[ntname];
                 handler.start(ntname_string, &name_string);
-                if index == 0 {
-                    handler.end(ntname_string, &name_string);
+                i += 1;
+
+                while i < indexes.len() {
+                    let fragidx = indexes[i];
+                    i += 1;
+                    match &self.fragments[fragidx].value {
+                        // RuleStart
+                        // current node is the child of parent
+                        &FragmentType::RuleStart { ntname, name, .. } => {
+                            let name_string = name.map(|x| &self.strings[x]);
+                            let ntname_string = &self.strings[ntname];
+                            handler.start(ntname_string, &name_string);
+                        },
+                        &FragmentType::RuleTermValue { tokidx, name, .. } => {
+                            let name_string = name.map(|x| &self.strings[x]);
+                            handler.term(tokidx, &name_string);
+                        },
+                        &FragmentType::RuleNonTerm { ev_name, ntnameidx, .. } => {
+                            let ntname_string = &self.strings[ntnameidx];
+                            let evname = ev_name.map(|x| &self.strings[x]);
+                            handler.end(ntname_string, &evname);
+                        },
+                    }
                 }
+                handler.end(ntname_string, &name_string);
             },
-            &FragmentType::RuleTermValue { tokidx, name, .. } => {
-                let name_string = name.map(|x| &self.strings[x]);
-                handler.term(tokidx, &name_string);
-            },
-            &FragmentType::RuleNonTerm { ev_name, ntnameidx, .. } => {
-                let ntname_string = &self.strings[ntnameidx];
-                let evname = ev_name.map(|x| &self.strings[x]);
-                handler.end(ntname_string, &evname);
-            },
+            _ => panic!("index 0 must be RuleStart")
         }
     }
 
@@ -197,9 +210,7 @@ impl ParsedTrees {
             curr = prev_fragment(&self.fragments, curr, usize::MAX);
         }
         indexes.reverse();
-        for index in &indexes {
-            self.stream(&indexes, *index, handler);
-        }
+        self.stream(&indexes, 0, handler);
     }
 }
 
